@@ -12,7 +12,6 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
-
 @Service
 public class MsalService {
 
@@ -80,6 +79,67 @@ public class MsalService {
         return getClient().acquireToken(parameters).get();
     }
 
+    // New SSO method - Silent token acquisition
+    public IAuthenticationResult acquireTokenSilently(String accountIdentifier) throws Exception {
+        IConfidentialClientApplication client = getClient();
+
+        // Get all accounts from cache
+        Set<IAccount> accounts = client.getAccounts().join();
+
+        // Find the specific account if accountIdentifier is provided
+        IAccount account = null;
+        if (accountIdentifier != null && !accountIdentifier.isEmpty()) {
+            for (IAccount acc : accounts) {
+                if (acc.homeAccountId().equals(accountIdentifier)) {
+                    account = acc;
+                    break;
+                }
+            }
+        } else if (!accounts.isEmpty()) {
+            // Use first available account if no specific identifier provided
+            account = accounts.iterator().next();
+        }
+
+        if (account == null) {
+            throw new Exception("No suitable account found for silent authentication");
+        }
+
+        SilentParameters silentParameters = SilentParameters
+                .builder(SCOPES)
+                .account(account)
+                .build();
+
+        try {
+            return client.acquireTokenSilently(silentParameters).get();
+        } catch (Exception e) {
+            // If silent acquisition fails (e.g., token expired), fall back to refresh token
+            return refreshToken(account);
+        }
+    }
+
+    // Helper method for token refresh
+    private IAuthenticationResult refreshToken(IAccount account) throws Exception {
+        SilentParameters silentParameters = SilentParameters
+                .builder(SCOPES)
+                .account(account)
+                .forceRefresh(true)
+                .build();
+
+        return getClient().acquireTokenSilently(silentParameters).get();
+    }
+
+    // Check if user is already authenticated
+    public boolean isUserAuthenticated() throws Exception {
+        Set<IAccount> accounts = getClient().getAccounts().join();
+        return !accounts.isEmpty();
+    }
+
+    // Get current account info
+    public IAccount getCurrentAccount() throws Exception {
+        Set<IAccount> accounts = getClient().getAccounts().join();
+        return accounts.isEmpty() ? null : accounts.iterator().next();
+    }
+
     public static String generateState() {
         return generateSecureString(STATE_LENGTH);
     }
@@ -94,9 +154,8 @@ public class MsalService {
         return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-
-    public String getUserInfo(String accessToken) throws IOException, ProtocolException, MalformedURLException {
-        URL url = new URL("https://graph.microsoft.com/oidc/userinfo");
+    public String getUserInfo(String accessToken) throws IOException {
+        URL url = new URL(graphApi);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
         conn.setRequestMethod("GET");
@@ -114,5 +173,4 @@ public class MsalService {
 
         return response.toString();
     }
-
 }
